@@ -1,0 +1,11 @@
+connect {
+	#1 --> ip, #2 --> domain
+	.type:integer 1
+	.addr:string 2
+	.port:integer 3
+}
+
+data 0x02 {
+	.data:string 1
+}
+
