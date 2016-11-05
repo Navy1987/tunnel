@@ -13,7 +13,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
-
+#include <signal.h>
 #include "tunnel.h"
 
 struct tunnel_config cfg;
@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
 	struct sockaddr addr;
 	const char *usage = "USAGE: ./tunnelc <listen ip> <listen port> <server ip> <server port> <crypt key>\n";
 	if (argc != 6) {
-		printf(usage);
+		printf("%s", usage);
 		return 0;
 	}
 	strcpy(cfg.lip, argv[1]);
@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
 	strcpy(cfg.sip, argv[3]);
 	cfg.sport = strtoul(argv[4], NULL, 0);
 	strcpy(cfg.key, argv[5]);
-
+	signal(SIGPIPE, SIG_IGN);
 	tosockaddr(&addr, cfg.lip, cfg.lport);
 	fd = socket(AF_INET, SOCK_STREAM, 0);
 	assert(fd > 0);

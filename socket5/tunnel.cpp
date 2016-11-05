@@ -70,7 +70,7 @@ nonblock(int fd, int on)
 }
 
 static int
-readcheck(int s, void *buff, size_t sz)
+tryread(int s, void *buff, size_t sz)
 {
 	int err;
 	for (;;) {
@@ -87,6 +87,20 @@ readcheck(int s, void *buff, size_t sz)
 	return -1;
 }
 
+static int
+readsz(int s, void *buff, size_t sz)
+{
+	int last = sz;
+	while (last != 0) {
+		int err = tryread(s, buff, last);
+		if (err < 0)
+			return err;
+		last -= err;
+		buff = (uint8_t *)buff + err;
+	}
+	return sz;
+}
+
 static void
 closetunnel(struct tunnel *t)
 {
@@ -97,8 +111,16 @@ closetunnel(struct tunnel *t)
 	return ;
 }
 
-#define	readret(s, d, sz, n)\
-	n = readcheck(s, d, sz);\
+#define	readcheck(s, d, sz, n)\
+	n = tryread(s, d, sz);\
+	if (n < 0) {\
+		closetunnel(t);\
+		printf("close\n");\
+		return -1;\
+	}
+
+#define	readsize(s, d, sz, n)\
+	n = readsz(s, d, sz);\
 	if (n < 0) {\
 		closetunnel(t);\
 		printf("close\n");\
@@ -169,12 +191,12 @@ tunnel_transfer(struct tunnel *t)
 	select((t->s > t->t ? t->s : t->t) + 1, &set,
 			NULL, NULL, NULL);
 	if (FD_ISSET(t->s, &set)) {
-		readret(t->s, buff, sizeof(buff), err);
+		readcheck(t->s, buff, sizeof(buff), err);
 		//printf("+%c", buff[0]);
 		write(t->t, buff, err);
 	}
 	if (FD_ISSET(t->t, &set)) {
-		readret(t->t, buff, sizeof(buff), err);
+		readcheck(t->t, buff, sizeof(buff), err);
 		write(t->s, buff, err);
 	}
 	return 0;
@@ -238,19 +260,22 @@ tunnel_transfer(struct tunnel *t)
 
 	nonblock(t->s, 1);
 	if (FD_ISSET(t->s, &set)) {
-		readret(t->s, t->buff, sizeof(t->buff), err);
+		readcheck(t->s, t->buff, sizeof(t->buff), err);
 		write(t->t, &err, sizeof(uint16_t));
-		crypt_encode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, err);
+		//crypt_encode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, err);
+		printf("send:%d\n", err);
 		write(t->t, t->buff, err);
 	}
 
 	nonblock(t->s, 0);
 	if (FD_ISSET(t->t, &set)) {
 		uint16_t sz;
-		readret(t->t, &sz, sizeof(sz), err);
+		readsize(t->t, &sz, sizeof(sz), err);
 		assert(sz < sizeof(t->buff));
-		readret(t->t, t->buff, sz, err);
-		crypt_decode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, sz);
+		readsize(t->t, t->buff, sz, err);
+		assert(sz == err);
+		//crypt_decode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, sz);
+		printf("recv:%d-%d\n", sz, err);
 		write(t->s, t->buff, sz);
 	}
 	return 0;
@@ -271,11 +296,11 @@ tunnel_auth(struct tunnel *t)
 	struct authack ack;
 
 	//read proto
-	readret(s, &req, sizeof(req), err);
+	readcheck(s, &req, sizeof(req), err);
 	assert(req.ver = 0x05);
 	if (req.nr > 1) {
 		uint8_t buff[req.nr - 1];
-		readret(s, buff, req.nr - 1, err);
+		readcheck(s, buff, req.nr - 1, err);
 		printf("auth:%d\n", req.method[0]);
 		noauth = testmethod(buff, req.nr - 1, 0x00);
 	}
@@ -311,7 +336,7 @@ tunnel_connect(struct tunnel *t)
 	struct head hdr;
 	uint8_t ack3[] = {0x05, 0x00, 0x00, 0x01,
 		0x00, 0x00, 0x00, 0x00, 0xe9, 0xc7};
-	readret(s, &hdr, sizeof(hdr), err);
+	readcheck(s, &hdr, sizeof(hdr), err);
 	assert(hdr.req == 0x01); //only support connect
 	switch (hdr.addr) {
 	case 1: //ipv4
@@ -321,11 +346,11 @@ tunnel_connect(struct tunnel *t)
 		int port;
 		uint8_t n;
 		char buff[128];
-		readret(s, buff, 5, err);	//pre-read, at leastest 5 bytes(n, '.com')
+		readcheck(s, buff, 5, err);	//pre-read, at leastest 5 bytes(n, '.com')
 		n = tou8(buff);
-		readret(s, &buff[5], n - 4, err); //read last domain
+		readcheck(s, &buff[5], n - 4, err); //read last domain
 		buff[n + 1] = 0;
-		readret(s, &buff[n + 2], sizeof(uint16_t), err);
+		readcheck(s, &buff[n + 2], sizeof(uint16_t), err);
 		port = ntohs(tou16(&buff[n + 2]));
 		err = connectdomain(t, &buff[1], port);
 		if (err < 0) {
