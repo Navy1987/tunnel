@@ -1,4 +1,4 @@
 .PHONY:all
 
 all:
-	make -C silly/ TARGET=../tunneld linux
+	make -C silly/ TARGET=../tunneld macosx

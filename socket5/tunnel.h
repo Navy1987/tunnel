@@ -9,15 +9,34 @@ struct tunnel_config {
 	char key[256];
 };
 
+struct buffer {
+	uint8_t *data;
+	size_t  datasz;
+	size_t  datacap;
+};
+
 struct tunnel {
 	int s;	//socket
 	int t;	//tunnel socket
 	int state;
-	uint8_t buff[64 * 1024 + 256];
+	struct {
+		struct buffer send;
+		struct buffer recv;
+	} sock;
+	struct {
+		struct buffer send;
+		struct buffer recv;
+	} tunnel;
+	struct buffer buff;	//for compact
 	const struct tunnel_config *cfg;
+	struct tunnel *next;
+	struct tunnel *prev;
 };
 
-void tunnel_init(struct tunnel *t, int fd, struct tunnel_config *cfg);
+struct tunnel *tunnel_create(int fd, struct tunnel_config *cfg);
+void tunnel_free(struct tunnel *t);
+
+int tunnel_recv(struct tunnel *t);
 int tunnel_process(struct tunnel *t);
 
 static inline void

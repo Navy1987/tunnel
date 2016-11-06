@@ -3,6 +3,6 @@ bootstrap = "main.lua"
 lualib_path = "silly/lualib/?.lua"
 lualib_cpath = "silly/luaclib/?.so"
 
-listen = "@6001"
+listen = "@8001"
 crypt = "helloworld"
 

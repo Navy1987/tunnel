@@ -47,6 +47,29 @@ struct head {
 #pragma pack(pop)
 socket5_zproto::serializer *S = new socket5_zproto::serializer;
 
+static inline void
+checkbuff(struct buffer *b, size_t need)
+{
+	if (b->datasz + need <= b->datacap)
+		return ;
+	b->datacap = b->datasz + need;
+	b->data = realloc(b->data, b->datacap);
+	return ;
+}
+
+static inline void
+usebuff(struct buffer *b, size_t n)
+{
+	size_t delta = 0;
+	assert(n <= b->datasz);
+	if (b->datasz > n) {
+		delta = b->datasz - n;
+		memmove(b->data, &b->data[n], delta);
+	}
+	b->datasz = delta;
+	return ;
+}
+
 static void
 nonblock(int fd, int on)
 {
@@ -370,6 +393,42 @@ tunnel_connect(struct tunnel *t)
 }
 
 int
+tunnel_recv(struct tunnel *t)
+{
+	int err;
+	fd_set set;
+	FD_ZERO(&set);
+	FD_SET(t->s, &set);
+	FD_SET(t->t, &set);
+	select((t->s > t->t ? t->s : t->t) + 1, &set,
+			NULL, NULL, NULL);
+
+	nonblock(t->s, 1);
+	if (FD_ISSET(t->s, &set)) {
+		readcheck(t->s, t->buff, sizeof(t->buff), err);
+		write(t->t, &err, sizeof(uint16_t));
+		//crypt_encode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, err);
+		printf("send:%d\n", err);
+		write(t->t, t->buff, err);
+	}
+
+	nonblock(t->s, 0);
+	if (FD_ISSET(t->t, &set)) {
+		uint16_t sz;
+		readsize(t->t, &sz, sizeof(sz), err);
+		assert(sz < sizeof(t->buff));
+		readsize(t->t, t->buff, sz, err);
+		assert(sz == err);
+		//crypt_decode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, sz);
+		printf("recv:%d-%d\n", sz, err);
+		write(t->s, t->buff, sz);
+	}
+	return 0;
+
+
+}
+
+int
 tunnel_process(struct tunnel *t)
 {
 	switch (t->state) {
@@ -391,6 +450,31 @@ tunnel_init(struct tunnel *t, int fd, struct tunnel_config *cfg)
 	t->state = 'A';
 	t->s = fd;
 	t->cfg = cfg;
+	return ;
+}
+
+struct tunnel *
+tunnel_create(int fd, struct tunnel_config *cfg)
+{
+	struct tunnel *t;
+	t = malloc(sizeof(*t));
+	memset(t, 0, sizeof(*t));
+	t->state = 'A';
+	t->s = fd;
+	t->cfg = cfg;
+	return t;
+}
+
+void
+tunnel_free(struct tunnel *t)
+{
+	if (t == NULL)
+		return ;
+	if (t->buff1.data)
+		free(t->buff1.data);
+	if (t->buff2.data)
+		free(t->buff2.data);
+	free(t);
 	return ;
 }
 
