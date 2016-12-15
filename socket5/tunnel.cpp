@@ -13,7 +13,9 @@
 #include <sys/select.h>
 
 #include "tunnel.h"
+
 extern "C" {
+#include "lz4.h"
 #include "crypt.h"
 }
 #include "socket5_zproto.hpp"
@@ -47,55 +49,28 @@ struct head {
 #pragma pack(pop)
 socket5_zproto::serializer *S = new socket5_zproto::serializer;
 
-static inline void
-checkbuff(struct buffer *b, size_t need)
-{
-	if (b->datasz + need <= b->datacap)
-		return ;
-	b->datacap = b->datasz + need;
-	b->data = realloc(b->data, b->datacap);
-	return ;
-}
-
-static inline void
-usebuff(struct buffer *b, size_t n)
-{
-	size_t delta = 0;
-	assert(n <= b->datasz);
-	if (b->datasz > n) {
-		delta = b->datasz - n;
-		memmove(b->data, &b->data[n], delta);
-	}
-	b->datasz = delta;
-	return ;
-}
-
+#if 0
 static void
-nonblock(int fd, int on)
+dumptofile(int fd, const uint8_t *data, size_t sz)
 {
-	int err;
-	int flag;
-	flag = fcntl(fd, F_GETFL, 0);
-	if (flag < 0) {
-		perror("nonblock F_GETFL");
-		return ;
-	}
-	if (on)
-		flag |= O_NONBLOCK;
-	else
-		flag &= ~O_NONBLOCK;
-	err = fcntl(fd, F_SETFL, flag);
-	if (err < 0) {
-		perror("nonblock F_SETFL");
-		return ;
-	}
+	/*
+	char name[64];
+	FILE *fp;
+	sprintf(name, "%d.dat", fd);
+	fp = fopen(name, "ab+");
+	fwrite(data, sz, 1, fp);
+	fclose(fp);
+	*/
 	return ;
 }
+#endif
+
 
 static int
 tryread(int s, void *buff, size_t sz)
 {
 	int err;
+	assert(sz > 0);
 	for (;;) {
 		err = read(s, buff, sz);
 		if (err > 0)
@@ -110,20 +85,6 @@ tryread(int s, void *buff, size_t sz)
 	return -1;
 }
 
-static int
-readsz(int s, void *buff, size_t sz)
-{
-	int last = sz;
-	while (last != 0) {
-		int err = tryread(s, buff, last);
-		if (err < 0)
-			return err;
-		last -= err;
-		buff = (uint8_t *)buff + err;
-	}
-	return sz;
-}
-
 static void
 closetunnel(struct tunnel *t)
 {
@@ -131,24 +92,9 @@ closetunnel(struct tunnel *t)
 		close(t->s);
 	if (t->t > 0)
 		close(t->t);
+	t->close = 1;
 	return ;
 }
-
-#define	readcheck(s, d, sz, n)\
-	n = tryread(s, d, sz);\
-	if (n < 0) {\
-		closetunnel(t);\
-		printf("close\n");\
-		return -1;\
-	}
-
-#define	readsize(s, d, sz, n)\
-	n = readsz(s, d, sz);\
-	if (n < 0) {\
-		closetunnel(t);\
-		printf("close\n");\
-		return -1;\
-	}
 
 static int
 testmethod(const uint8_t *buff, size_t n, int method)
@@ -161,71 +107,10 @@ testmethod(const uint8_t *buff, size_t n, int method)
 	return 0;
 }
 
-#if 0
-//for test
-static int
-connectip(struct tunnel *t, const char *ip, int port)
-{
-	int err;
-	struct sockaddr addr;
-	printf("connect ip:%s\n", ip);
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	assert(fd);
-	tosockaddr(&addr, ip, port);
-	err = connect(fd, &addr, sizeof(addr));
-	assert(err == 0);
-	assert(t->t == 0);
-	t->t = fd;
-	nonblock(err, 1);
-	nonblock(t->s, 1);
-	return 0;
-}
 
-static int
-connectdomain(struct tunnel *t, const char *url, int port)
-{
-	int err;
-	int errn;
-	char buff[1024];
-	const char *ip;
-	struct hostent *h;
-	struct hostent host;
-	err = gethostbyname_r(url, &host, buff, sizeof(buff), &h, &errn);
-	if (h == NULL) {
-		printf("gethostbyname_r errno:%s %d %d %d\n", url, err, errn, HOST_NOT_FOUND);
-		return -1;
-	}
-
-	ip = inet_ntop(h->h_addrtype, h->h_addr_list[0],
-				buff, sizeof(buff));
-	err = connectip(t, ip, port);
-	return err;
-}
-
-static int
-tunnel_transfer(struct tunnel *t)
-{
-	int err;
-	fd_set set;
-	char buff[512];
-	FD_ZERO(&set);
-	FD_SET(t->s, &set);
-	FD_SET(t->t, &set);
-	select((t->s > t->t ? t->s : t->t) + 1, &set,
-			NULL, NULL, NULL);
-	if (FD_ISSET(t->s, &set)) {
-		readcheck(t->s, buff, sizeof(buff), err);
-		//printf("+%c", buff[0]);
-		write(t->t, buff, err);
-	}
-	if (FD_ISSET(t->t, &set)) {
-		readcheck(t->t, buff, sizeof(buff), err);
-		write(t->s, buff, err);
-	}
-	return 0;
-}
-
-#else
+#define	ISCOMPLETE(b, n)\
+	if (b.datasz < n)\
+		return 0;
 
 static int
 bridge(struct tunnel *t)
@@ -270,119 +155,154 @@ connectdomain(struct tunnel *t, const char *url, int port)
 	return 0;
 }
 
+static inline void
+checkbuff(struct buffer *b, size_t need)
+{
+	if (b->datasz + need <= b->datacap)
+		return ;
+	b->datacap = b->datasz + need;
+	b->data = (uint8_t *)realloc(b->data, b->datacap);
+	return ;
+}
+
+static void inline
+buffout(struct buffer *b, size_t n)
+{
+	size_t delta = 0;
+	assert(n <= b->datasz);
+	if (b->datasz > n) {
+		delta = b->datasz - n;
+		memmove(b->data, &b->data[n], delta);
+	}
+	b->datasz = delta;
+	return ;
+}
+
+static void inline
+buffin(struct buffer *b, const void *data, size_t n)
+{
+	checkbuff(b, n);
+	memcpy(&b->data[b->datasz], data, n);
+	b->datasz += n;
+	return ;
+}
+
 static int
-tunnel_transfer(struct tunnel *t)
+buffread(int fd, struct buffer *b)
 {
 	int err;
-	fd_set set;
-	FD_ZERO(&set);
-	FD_SET(t->s, &set);
-	FD_SET(t->t, &set);
-	select((t->s > t->t ? t->s : t->t) + 1, &set,
-			NULL, NULL, NULL);
-
-	nonblock(t->s, 1);
-	if (FD_ISSET(t->s, &set)) {
-		readcheck(t->s, t->buff, sizeof(t->buff), err);
-		write(t->t, &err, sizeof(uint16_t));
-		//crypt_encode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, err);
-		printf("send:%d\n", err);
-		write(t->t, t->buff, err);
-	}
-
-	nonblock(t->s, 0);
-	if (FD_ISSET(t->t, &set)) {
-		uint16_t sz;
-		readsize(t->t, &sz, sizeof(sz), err);
-		assert(sz < sizeof(t->buff));
-		readsize(t->t, t->buff, sz, err);
-		assert(sz == err);
-		//crypt_decode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, sz);
-		printf("recv:%d-%d\n", sz, err);
-		write(t->s, t->buff, sz);
-	}
+	if (b->datasz == b->datacap)
+		checkbuff(b, 64 * 1024);
+	err = tryread(fd, &b->data[b->datasz], b->datacap - b->datasz);
+	if (err < 0)
+		return -1;
+	b->datasz += err;
 	return 0;
 }
 
-
-#endif
-
-
+static int
+buffwrite(int fd, struct buffer *b)
+{
+	int err;
+	err = write(fd, b->data, b->datasz);
+	if (err <= 0)
+		return err;
+	assert(err >= 1);
+	buffout(b, err);
+	return err;
+}
 
 static int
 tunnel_auth(struct tunnel *t)
 {
-	int err;
+	size_t sz;
 	int noauth;
-	int s = t->s;
-	struct authreq req;
+	struct authreq *req;
 	struct authack ack;
-
 	//read proto
-	readcheck(s, &req, sizeof(req), err);
-	assert(req.ver = 0x05);
-	if (req.nr > 1) {
-		uint8_t buff[req.nr - 1];
-		readcheck(s, buff, req.nr - 1, err);
-		printf("auth:%d\n", req.method[0]);
-		noauth = testmethod(buff, req.nr - 1, 0x00);
+	sz = sizeof(*req);
+	ISCOMPLETE(t->sock.recv, sz);
+	req = (struct authreq *)t->sock.recv.data;
+	assert(req->ver = 0x05);
+	if (req->nr > 1) {
+		sz += sizeof(uint8_t) * (req->nr - 1);
+		ISCOMPLETE(t->sock.recv, sz);
+		printf("auth:%d\n", req->method[0]);
+		noauth = testmethod(&req->method[1], req->nr - 1, 0x00);
 	}
-	if (req.method[0] == 0x00)
+	if (req->method[0] == 0x00)
 		noauth = 1;
+
+	buffout(&t->sock.recv, sz);
+
+	//ack proto
 	ack.ver = 0x05;
 	if (noauth != 1) {
 		printf("only support noauth\n");
 		ack.method = 0xff;
-		write(s, &ack, sizeof(ack));
+		buffin(&t->sock.send, &ack, sizeof(ack));
 		closetunnel(t);
 		return -1;
 	}
+
 	//ack proto
 	ack.method = 0x00;
-	err = write(s, &ack, sizeof(ack));
-	if (err < 0) {
-		printf("=============\n");
-		closetunnel(t);
-		return 0;
-	}
+	buffin(&t->sock.send, &ack, sizeof(ack));
 	t->state = 'C';
+	printf("auth\n");
 	return 0;
 }
 
-#define	tou16(n)	(*((uint16_t *)n))
-#define	tou8(n)		(*((uint8_t *)n))
+#define	tou16(n)	(*((uint16_t *)(n)))
+#define	tou8(n)		(*((uint8_t *)(n)))
 static int
 tunnel_connect(struct tunnel *t)
 {
-	int err;
-	int s = t->s;
-	struct head hdr;
+	size_t sz;
+	struct head *hdr;
 	uint8_t ack3[] = {0x05, 0x00, 0x00, 0x01,
 		0x00, 0x00, 0x00, 0x00, 0xe9, 0xc7};
-	readcheck(s, &hdr, sizeof(hdr), err);
-	assert(hdr.req == 0x01); //only support connect
-	switch (hdr.addr) {
+	sz = sizeof(*hdr);
+	ISCOMPLETE(t->sock.recv, sz);
+	hdr = (struct head *)t->sock.recv.data;
+	assert(hdr->req == 0x01); //only support connect
+	switch (hdr->addr) {
 	case 1: //ipv4
 		assert(0);
 		break;
 	case 3: { //domain
+		int err;
 		int port;
 		uint8_t n;
-		char buff[128];
-		readcheck(s, buff, 5, err);	//pre-read, at leastest 5 bytes(n, '.com')
-		n = tou8(buff);
-		readcheck(s, &buff[5], n - 4, err); //read last domain
-		buff[n + 1] = 0;
-		readcheck(s, &buff[n + 2], sizeof(uint16_t), err);
-		port = ntohs(tou16(&buff[n + 2]));
-		err = connectdomain(t, &buff[1], port);
+		//length
+		n =tou8(t->sock.recv.data + sz);
+		sz += sizeof(uint8_t);
+		ISCOMPLETE(t->sock.recv, sz);
+		//domain
+		char domain[n + 1];
+		domain[n] = 0;
+		memcpy(domain, t->sock.recv.data + sz, n);
+		sz += n;
+		ISCOMPLETE(t->sock.recv, sz);
+		//port
+		ISCOMPLETE(t->sock.recv, sz + sizeof(uint16_t));
+		port = tou16(t->sock.recv.data + sz);
+		port = ntohs(port);
+		sz += sizeof(uint16_t);
+		buffout(&t->sock.recv, sz);
+		//connect
+		err = connectdomain(t, domain, port);
 		if (err < 0) {
 			closetunnel(t);
 			return 0;
 		}
 		*((unsigned short *)&ack3[8]) = htons(port);
-		write(s, ack3, sizeof(ack3));
+		buffin(&t->sock.send, ack3, sizeof(ack3));
 		t->state = 'T';
+		//nonblock
+		nonblock(t->s);
+		nonblock(t->t);
+		printf("connect %s %d\n", domain, t->t);
 		break;
 	}
 	case 4: //ipv6
@@ -393,43 +313,96 @@ tunnel_connect(struct tunnel *t)
 }
 
 int
-tunnel_recv(struct tunnel *t)
+tunnel_io(struct tunnel *t)
 {
-	int err;
-	fd_set set;
-	FD_ZERO(&set);
-	FD_SET(t->s, &set);
-	FD_SET(t->t, &set);
-	select((t->s > t->t ? t->s : t->t) + 1, &set,
-			NULL, NULL, NULL);
+	int maxn;
+	struct timeval tv;
+	fd_set rset;
+	fd_set wset;
+	FD_ZERO(&rset);
+	FD_ZERO(&wset);
+	FD_SET(t->s, &rset);
+	FD_SET(t->s, &wset);
+	FD_SET(t->t, &rset);
+	FD_SET(t->t, &wset);
+	maxn = (t->s > t->t ? t->s : t->t) + 1;
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
+	select(maxn, &rset, &wset, NULL, &tv);
 
-	nonblock(t->s, 1);
-	if (FD_ISSET(t->s, &set)) {
-		readcheck(t->s, t->buff, sizeof(t->buff), err);
-		write(t->t, &err, sizeof(uint16_t));
-		//crypt_encode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, err);
-		printf("send:%d\n", err);
-		write(t->t, t->buff, err);
+	if (FD_ISSET(t->s, &rset))
+		buffread(t->s, &t->sock.recv);
+	if (FD_ISSET(t->s, &wset))
+		buffwrite(t->s, &t->sock.send);
+	if (FD_ISSET(t->t, &rset))
+		buffread(t->t, &t->tunnel.recv);
+	if (FD_ISSET(t->t, &wset))
+		buffwrite(t->t, &t->tunnel.send);
+	return 0;
+}
+
+#define	BUFFSZ (64 * 1024)
+
+static const uint8_t *
+decompress(const void *src, size_t srcsz, size_t originsz)
+{
+	static uint8_t *buff = NULL;
+	static size_t buffsz = 0;
+
+	if (buffsz < originsz) {
+		buffsz = (originsz + BUFFSZ - 1) / BUFFSZ * BUFFSZ;
+		buff = (uint8_t *)realloc(buff, buffsz);
+	}
+	LZ4_decompress_fast((const char *)src, (char *)buff, originsz);
+	return buff;
+}
+
+static int
+tunnel_transfer(struct tunnel *t)
+{
+	//process tunnel
+	if (t->tunnel.recv.datasz > sizeof(uint16_t)) {
+		int offset;
+		int compress;
+		const uint8_t *dat;
+		size_t sz = tou16(t->tunnel.recv.data);
+		assert(sz > 0);
+		size_t total = sz + sizeof(uint16_t);
+		if (t->tunnel.recv.datasz < total)
+			return 0;
+		offset = sizeof(uint16_t);
+		compress = tou8(t->tunnel.recv.data + offset);
+		assert(compress == 1 || compress == 0);
+		offset += sizeof(uint8_t);
+		if (compress) {	//compress
+			size_t origin = tou16(t->tunnel.recv.data + offset);
+			offset += sizeof(uint16_t);
+			dat = decompress(t->tunnel.recv.data + offset, sz - 3, origin);
+			sz = origin;
+		} else {	//uncompress
+			dat = t->tunnel.recv.data + offset;
+			sz -= 1;
+		}
+		buffin(&t->sock.send, dat, sz);
+		buffout(&t->tunnel.recv, total);
 	}
 
-	nonblock(t->s, 0);
-	if (FD_ISSET(t->t, &set)) {
-		uint16_t sz;
-		readsize(t->t, &sz, sizeof(sz), err);
-		assert(sz < sizeof(t->buff));
-		readsize(t->t, t->buff, sz, err);
-		assert(sz == err);
-		//crypt_decode((uint8_t *)t->cfg->key, strlen(t->cfg->key), t->buff, sz);
-		printf("recv:%d-%d\n", sz, err);
-		write(t->s, t->buff, sz);
+	if (t->sock.recv.datasz > 0) {
+		uint16_t n;
+		if (t->sock.recv.datasz > 0xff)
+			n = 0xff;
+		else
+			n = t->sock.recv.datasz;
+
+		buffin(&t->tunnel.send, &n, sizeof(n));
+		buffin(&t->tunnel.send, t->sock.recv.data, n);
+		buffout(&t->sock.recv, n);
 	}
 	return 0;
-
-
 }
 
 int
-tunnel_process(struct tunnel *t)
+tunnel_do(struct tunnel *t)
 {
 	switch (t->state) {
 	case 'A':	//auth
@@ -444,20 +417,11 @@ tunnel_process(struct tunnel *t)
 	return -1;
 }
 
-void
-tunnel_init(struct tunnel *t, int fd, struct tunnel_config *cfg)
-{
-	t->state = 'A';
-	t->s = fd;
-	t->cfg = cfg;
-	return ;
-}
-
 struct tunnel *
 tunnel_create(int fd, struct tunnel_config *cfg)
 {
 	struct tunnel *t;
-	t = malloc(sizeof(*t));
+	t = (struct tunnel *)malloc(sizeof(*t));
 	memset(t, 0, sizeof(*t));
 	t->state = 'A';
 	t->s = fd;
@@ -465,15 +429,44 @@ tunnel_create(int fd, struct tunnel_config *cfg)
 	return t;
 }
 
+static void inline
+freebuff(struct buffer *b)
+{
+	if (b->data)
+		free(b->data);
+}
+
 void
-tunnel_free(struct tunnel *t)
+tunnel_append(struct tunnel *t, struct tunnel **parent)
+{
+	t->prev = NULL;
+	t->next = *parent;
+
+	if (*parent)
+		(*parent)->prev = t;
+
+	*parent = t;
+	return ;
+}
+
+void
+tunnel_free(struct tunnel *t, struct tunnel **root)
 {
 	if (t == NULL)
 		return ;
-	if (t->buff1.data)
-		free(t->buff1.data);
-	if (t->buff2.data)
-		free(t->buff2.data);
+	if (t->next)
+		t->next->prev = t->prev;
+
+	if (t->prev == NULL)
+		*root = t->next;
+	else
+		t->prev->next = t->next;
+
+	freebuff(&t->sock.send);
+	freebuff(&t->sock.recv);
+	freebuff(&t->tunnel.send);
+	freebuff(&t->tunnel.recv);
+	freebuff(&t->buff);
 	free(t);
 	return ;
 }

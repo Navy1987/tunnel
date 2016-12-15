@@ -4,6 +4,7 @@ local socket = require "socket"
 local zproto = require "zproto"
 local crypt = require "crypt"
 local dns = require "dns"
+local lz4 = require "lz4"
 
 local proto = zproto:parse [[
 connect {
@@ -11,6 +12,7 @@ connect {
 	.addr:string 2
 	.port:integer 3
 }
+
 ]]
 
 local key = env.get("crypt")
@@ -25,8 +27,18 @@ local function readpacket(fd)
 end
 
 local function writepacket(fd, d)
-	local sz = string.pack("<I2", #d)
-	socket.write(fd, sz .. d)
+	assert(#d < 65536)
+	local fmt = string.format("<I2I1c%d", #d)
+	local data = string.pack(fmt, #d + 1, 0, d)
+	socket.write(fd, data)
+end
+
+local function writecompress(fd, sz, d)
+	assert(sz < 65536)
+	assert(#d < 65536)
+	local fmt = string.format("<I2I1I2c%d", #d)
+	local data = string.pack(fmt, #d + 3, 1, sz, d)
+	socket.write(fd, data)
 end
 
 local function pourout(from, to)
@@ -37,7 +49,9 @@ local function pourout(from, to)
 				return
 			end
 			assert(body)
-			local d = crypt.aesdecode(key, body)
+			--local d = crypt.aesdecode(key, body)
+			local d = body
+			--print("pourout:", d)
 			--print("transfer", #d)
 			socket.write(to, d)
 		end
@@ -53,9 +67,14 @@ local function comein(from, to)
 				return
 			end
 			local d = d1 .. d2
-			d = crypt.aesencode(key, d)
-			--print("transfer", #d)
-			writepacket(to, d)
+			local p = lz4.compress(d)
+			local dlen = #d
+			local plen = #p
+			if plen < dlen then
+				writecompress(to, dlen, p)
+			else
+				writepacket(to, d)
+			end
 		end
 	end
 end

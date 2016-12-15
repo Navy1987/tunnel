@@ -18,6 +18,7 @@ struct buffer {
 struct tunnel {
 	int s;	//socket
 	int t;	//tunnel socket
+	int close;
 	int state;
 	struct {
 		struct buffer send;
@@ -33,13 +34,37 @@ struct tunnel {
 	struct tunnel *prev;
 };
 
+void tunnel_append(struct tunnel *t, struct tunnel **parent);
+
 struct tunnel *tunnel_create(int fd, struct tunnel_config *cfg);
-void tunnel_free(struct tunnel *t);
+void tunnel_free(struct tunnel *t, struct tunnel **root);
 
-int tunnel_recv(struct tunnel *t);
-int tunnel_process(struct tunnel *t);
+int tunnel_io(struct tunnel *t);
+int tunnel_do(struct tunnel *t);
 
-static inline void
+
+//aux
+static void inline
+nonblock(int fd)
+{
+	int err;
+	int flag;
+	flag = fcntl(fd, F_GETFL, 0);
+	if (flag < 0) {
+		perror("nonblock F_GETFL");
+		return ;
+	}
+	flag |= O_NONBLOCK;
+	err = fcntl(fd, F_SETFL, flag);
+	if (err < 0) {
+		perror("nonblock F_SETFL");
+		return ;
+	}
+	return ;
+}
+
+
+static void inline
 tosockaddr(struct sockaddr *addr, const char *ip, int port)
 {
 	struct sockaddr_in *in = (struct sockaddr_in *)addr;

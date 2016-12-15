@@ -5,7 +5,5 @@ connect {
 	.port:integer 3
 }
 
-data 0x02 {
-	.data:string 1
-}
+
 
