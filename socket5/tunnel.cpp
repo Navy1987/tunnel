@@ -150,6 +150,7 @@ connectdomain(struct tunnel *t, const char *url, int port)
 		return err;
 	err = write(t->t, &sz, sizeof(uint16_t));
 	assert(err == sizeof(uint16_t));
+	crypt_encode((uint8_t *)t->cfg->key, t->cfg->keylen, (uint8_t *)dat.c_str(), sz);
 	err = write(t->t, dat.c_str(), sz);
 	assert((size_t)err == sz);
 	return 0;
@@ -376,10 +377,14 @@ tunnel_transfer(struct tunnel *t)
 		offset += sizeof(uint8_t);
 		if (compress) {	//compress
 			size_t origin = tou16(t->tunnel.recv.data + offset);
+			crypt_decode((uint8_t *)t->cfg->key, t->cfg->keylen,
+					t->tunnel.recv.data + offset, sz - 3);
 			offset += sizeof(uint16_t);
 			dat = decompress(t->tunnel.recv.data + offset, sz - 3, origin);
 			sz = origin;
 		} else {	//uncompress
+			crypt_decode((uint8_t *)t->cfg->key, t->cfg->keylen,
+					t->tunnel.recv.data + offset, sz - 1);
 			dat = t->tunnel.recv.data + offset;
 			sz -= 1;
 		}
@@ -395,6 +400,7 @@ tunnel_transfer(struct tunnel *t)
 			n = t->sock.recv.datasz;
 
 		buffin(&t->tunnel.send, &n, sizeof(n));
+		crypt_encode((uint8_t *)t->cfg->key, t->cfg->keylen, t->sock.recv.data, n);
 		buffin(&t->tunnel.send, t->sock.recv.data, n);
 		buffout(&t->sock.recv, n);
 	}

@@ -7,6 +7,7 @@ struct tunnel_config {
 	char sip[64]; //server ip
 	int sport; //server port
 	char key[256];
+	int keylen;
 };
 
 struct buffer {

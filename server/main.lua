@@ -49,8 +49,7 @@ local function pourout(from, to)
 				return
 			end
 			assert(body)
-			--local d = crypt.aesdecode(key, body)
-			local d = body
+			local d = crypt.aesdecode(key, body)
 			--print("pourout:", d)
 			--print("transfer", #d)
 			socket.write(to, d)
@@ -71,8 +70,10 @@ local function comein(from, to)
 			local dlen = #d
 			local plen = #p
 			if plen < dlen then
+				p = crypt.aesencode(key, p)
 				writecompress(to, dlen, p)
 			else
+				d = crypt.aesencode(key, d)
 				writepacket(to, d)
 			end
 		end
@@ -96,6 +97,7 @@ end
 socket.listen(env.get("listen"), function(fd, addr)
         print(fd, "from", addr)
 	local body = readpacket(fd)
+	body = crypt.aesdecode(key, body)
 	local req = proto:decode("connect", body)
 	print(req.type, req.addr, req.port)
 	assert(REQ[req.type])(fd, req)

@@ -35,6 +35,7 @@ int main(int argc, char *argv[])
 	strcpy(cfg.sip, argv[3]);
 	cfg.sport = strtoul(argv[4], NULL, 0);
 	strcpy(cfg.key, argv[5]);
+	cfg.keylen = strlen(cfg.key);
 	signal(SIGPIPE, SIG_IGN);
 	tosockaddr(&addr, cfg.lip, cfg.lport);
 	fd = socket(AF_INET, SOCK_STREAM, 0);
