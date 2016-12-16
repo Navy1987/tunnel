@@ -2,7 +2,7 @@
 
 all:tunnelc
 
-tunnelc:main.o tunnel.o socket5_zproto.o zproto.o zprotowire.o crypt.o sha256.o aes.o ../lib/lz4.c
+tunnelc:main.o tunnel.o buffer.o socket5.o aux.o socket5_zproto.o zproto.o zprotowire.o crypt.o sha256.o aes.o ../lib/lz4.c
 	g++ -std=c++0x -I../lib/ -Wall -g -o $@ $^ -lpthread
 
 %.o:%.c

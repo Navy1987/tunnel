@@ -8,15 +8,22 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <arpa/inet.h>
-#include <netinet/tcp.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <signal.h>
+#include "aux.h"
+#include "socket5.h"
 #include "tunnel.h"
 
-struct tunnel_config cfg;
+struct {
+	char lip[64]; //listen ip
+	int lport; //listen port
+	char sip[64]; //server ip
+	int sport; //server port
+	char key[256];
+	int keylen;
+} cfg;
 
 int main(int argc, char *argv[])
 {
@@ -24,7 +31,6 @@ int main(int argc, char *argv[])
 	int err;
 	int enable = 1;
 	struct sockaddr addr;
-	struct tunnel *root = NULL;
 	const char *usage = "USAGE: ./tunnelc <listen ip> <listen port> <server ip> <server port> <crypt key>\n";
 	if (argc != 6) {
 		printf("%s", usage);
@@ -37,10 +43,11 @@ int main(int argc, char *argv[])
 	strcpy(cfg.key, argv[5]);
 	cfg.keylen = strlen(cfg.key);
 	signal(SIGPIPE, SIG_IGN);
-	tosockaddr(&addr, cfg.lip, cfg.lport);
+	tunnel::init(cfg.sip, cfg.sport, cfg.key);
+	aux::tosockaddr(&addr, cfg.lip, cfg.lport);
 	fd = socket(AF_INET, SOCK_STREAM, 0);
 	assert(fd > 0);
-	nonblock(fd);
+	aux::nonblock(fd);
 	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
 	err = bind(fd, &addr, sizeof(addr));
 	assert(err >= 0);
@@ -48,32 +55,16 @@ int main(int argc, char *argv[])
 	for (;;) {
 		fd_set rset;
 		struct timeval tv;
-		struct tunnel *t;
 		FD_SET(fd, &rset);
 		tv.tv_sec = 0;
 		tv.tv_usec = 0;
 		select(fd + 1, &rset, NULL, NULL, &tv);
 		if (FD_ISSET(fd, &rset)) {
 			int s = accept(fd, NULL, NULL);
-			if (s > 0) {
-				struct tunnel *t = tunnel_create(s, &cfg);
-				tunnel_append(t, &root);
-			}
+			if (s > 0)
+				socket5_new(s);
 		}
-		t = root;
-		while (t != NULL) {
-			int err;
-			struct tunnel *tmp = t;
-			t = t->next;
-			err = tunnel_io(tmp);
-			if (err < 0) {
-				tunnel_free(tmp, &root);
-				continue;
-			}
-			err = tunnel_do(tmp);
-			if (err < 0)
-				tunnel_free(tmp, &root);
-		}
+		socket5_io();
 		usleep(1000);
 	}
 	return 0;
