@@ -39,23 +39,6 @@ struct head {
 
 #pragma pack(pop)
 
-#if 0
-static void
-dumptofile(int fd, const uint8_t *data, size_t sz)
-{
-	/*
-	char name[64];
-	FILE *fp;
-	sprintf(name, "%d.dat", fd);
-	fp = fopen(name, "ab+");
-	fwrite(data, sz, 1, fp);
-	fclose(fp);
-	*/
-	return ;
-}
-#endif
-
-
 struct proxy {
 	int fd;
 	int tfd;
@@ -73,7 +56,7 @@ struct proxy {
 
 
 
-static std::vector<int> proxycooks;
+//static std::vector<int> proxycooks;
 static std::unordered_map<int, int> handleproxy;	//handle, proxy
 static std::unordered_map<int, int> tunnelproxy;	//tunnel, proxy
 static std::unordered_map<int, struct proxy> proxys;
@@ -96,10 +79,13 @@ closeproxy(struct proxy *p)
 	close(fd);
 	if (p->tfd > 0)
 		tunnel::close(p->tfd);
-	if (p->state == 'B')
+	if (p->state == 'B') {
+		printf("close handle:%d\n", p->tfd);
 		handleproxy.erase(p->tfd);
-	else if (p->state == 'T')
-		handleproxy.erase(p->tfd);
+	} else if (p->state == 'T') {
+		printf("close tunnel:%d\n", p->tfd);
+		tunnelproxy.erase(p->tfd);
+	}
 	proxys.erase(fd);
 	return ;
 }
@@ -186,7 +172,7 @@ proxy_connect(struct proxy *t)
 		t->state = 'B';
 		assert(t->tfd == -1);
 		handleproxy[err] = t->fd;
-		//printf("connect %s handle %d fd:%d \n", domain, err, t->fd);
+		printf("connect %s handle %d fd:%d \n", domain, err, t->fd);
 		break;
 	}
 	case 4: //ipv6
@@ -224,18 +210,34 @@ static std::unordered_map<int, int (*)(struct proxy *p)> router = {
 static void
 process()
 {
-	for (auto fd:proxycooks) {
-		auto &p = proxys[fd];
+	std::vector<struct proxy *> errors;
+	for (auto &iter:proxys) {
+		auto &p = iter.second;
 		int err;
 		do {
 			err = router[p.state](&p);
 		} while (err == SUCCESS);
 		if (err == ERROR)
-			closeproxy(&p);
+			errors.push_back(&p);
 	}
-	proxycooks.clear();
+	for (auto p:errors)
+		closeproxy(p);
+	//proxycooks.clear();
 	return ;
 }
+
+static void
+dumptofile(int fd, const uint8_t *data, size_t sz)
+{
+	char name[64];
+	FILE *fp;
+	sprintf(name, "s%d.dat", fd);
+	fp = fopen(name, "ab+");
+	fwrite(data, sz, 1, fp);
+	fclose(fp);
+	return ;
+}
+
 
 int socket5_io()
 {
@@ -254,15 +256,21 @@ int socket5_io()
 		if (fd > maxfd)
 			maxfd = fd;
 	}
-	//TODO:process close
 	select(maxfd + 1, &rset, &wset, NULL, &tv);
 	for (auto const &iter:proxys) {
 		int fd = iter.first;
 		if (FD_ISSET(fd, &rset)) {
-			proxycooks.push_back(fd);
-			proxys[fd].buffer.recv.read(fd);
+			int err;
+			//proxycooks.push_back(fd);
+			assert(proxys[fd].state != 0);
+			err = proxys[fd].buffer.recv.read(fd);
+			if (err == 0) {
+				closeproxy(&proxys[fd]);
+				continue;
+			}
 		}
 		if (FD_ISSET(fd, &wset)) {
+			assert(proxys[fd].state != 0);
 			proxys[fd].buffer.send.write(fd);
 		}
 	}
@@ -285,7 +293,7 @@ int socket5_io()
 			proxys[fd].state = 'P';
 			handleproxy.erase(e.open.handle);
 			tunnelproxy[e.open.fd] = fd;
-			proxycooks.push_back(fd);
+			//proxycooks.push_back(fd);
 			break;}
 		case tunnel::CLOSE: {
 			int fd = tunnelproxy[e.close.fd];
@@ -293,7 +301,10 @@ int socket5_io()
 			break;}
 		case tunnel::DATA: {
 			int fd = tunnelproxy[e.data.fd];
-			proxys[fd].buffer.send.in(e.data.data, e.data.sz);
+			if (proxys.count(fd)) {
+				assert(proxys[fd].state != 0);
+				proxys[fd].buffer.send.in(e.data.data, e.data.sz);
+			}
 			break;}
 		default:
 			assert(0);

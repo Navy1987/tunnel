@@ -42,9 +42,17 @@ local protoname = {
 local REQ = {}
 local outtunnel = {}
 
+local function dumptofile(fd, dat)
+	local name = fd .. ".dat"
+	local f = assert(io.open(name, "a+"))
+	f:write(dat)
+	f:close()
+end
+
 local function cleartunnel(fd)
 	for k, v in pairs(outtunnel) do
 		if v == fd then
+			socket.close(k)
 			outtunnel[k] = nil
 		end
 	end
@@ -63,15 +71,26 @@ local function writepacket(fd, cmd, name, packet)
 	local fmt = string.format("I4c%dI1", #d)
 	local dat = string.pack(fmt, sz, d, cmd)
 	--dumpstr(dat)
-	socket.write(fd, dat)
+	assert(socket.write(fd, dat))
+	return dat
 end
 
 REQ[1] = function (fd, req) --IP
 	assert(false, "IP support")
 end
 
+local function isip(addr)
+	local n = string.match(addr, "[0-9%.]+")
+	return n == addr
+end
+
 REQ[2] = function (fd, req) --DOMAIN
-	local ip =dns.query(req.addr, 1000)
+	local ip
+	if isip(req.addr) then
+		ip = req.addr
+	else
+		ip = dns.query(req.addr, 1000)
+	end
 	ip = string.format("%s@%d", ip, req.port)
 	print("connectxx", req.addr, ip)
 	local d = socket.connect(ip)
@@ -79,6 +98,7 @@ REQ[2] = function (fd, req) --DOMAIN
 		print("connect fail", ip, req.addr)
 		return d
 	end
+	socket.limit(d, 1024 * 1024 * 1024)
 	local ack = {
 		handle = req.handle,
 		session = d
@@ -106,7 +126,7 @@ local function readpacket(fd)
 		return d
 	end
 	local cmd = d:byte(sz)
-	d = crypt.aesdecode(key, d)
+	d = crypt.aesdecode(key, d:sub(1, sz - 1))
 	local p = protoname[cmd]
 	local req = assert(proto:decode(p, d), p)
 	req.cmd = cmd
@@ -115,6 +135,7 @@ end
 
 local function comin(out)
 	return function()
+		local n = 0
 		while true do
 			local fd = outtunnel[out]
 			if not fd then
@@ -123,7 +144,7 @@ local function comin(out)
 			local d1 = socket.read(out, 1)
 			local d2 = socket.readall(out)
 			if not (d1 and d2) then
-				print("report close", out)
+				print("report close1", out)
 				outtunnel[out] = nil
 				reportclose(fd, out)
 				return
@@ -132,18 +153,23 @@ local function comin(out)
 				session = out,
 				data = d1 .. d2
 			}
-			print("comin", fd, #ack.data)
-			writepacket(fd, 3, "data", ack)
+			--print("comin", out, #ack.data)
+			local dat = writepacket(fd, 3, "data", ack)
+			n = n + #dat
+			print("dump out:", out, fd, n)
+			--dumptofile(out, dat)
 		end
 	end
 end
 
 socket.listen(env.get("listen"), function(fd, addr)
         print(fd, "from", addr)
+	socket.limit(fd, 1024 * 1024 * 1024)
 	while true do
 		local req = readpacket(fd)
 		if not req then
 			cleartunnel(fd)
+			print("disconnect", fd)
 			socket.close(fd)
 			return
 		end
@@ -152,8 +178,8 @@ socket.listen(env.get("listen"), function(fd, addr)
 			local out = assert(REQ[req.type])(fd, req)
 			print("connect", req.type, out)
 			if not out then
-				print("close tunnel 2", fd)
-				socket.close(fd)
+				print("close tunnel 2", out)
+				reportclose(fd, req.handle)
 				return
 			end
 			outtunnel[out] = fd
@@ -162,10 +188,11 @@ socket.listen(env.get("listen"), function(fd, addr)
 			local out = req.session
 			outtunnel[out] = nil
 			socket.close(out)
+			print("active close", out)
 		elseif req.cmd == 3 then --data
 			local out = req.session
 			print("out", req.session,  #req.data)
-			socket.write(out, req.data)
+			assert(socket.write(out, req.data))
 		end
 	end
 end)

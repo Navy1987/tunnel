@@ -16,7 +16,7 @@ extern "C" {
 
 namespace tunnel {
 
-#define	TUNNEL_NR (64)
+#define	TUNNEL_NR (128)
 
 static int addrport;
 static std::string addrip;
@@ -53,6 +53,19 @@ decompress(const void *src, size_t srcsz, size_t originsz)
 	LZ4_decompress_fast((const char *)src, (char *)buff, originsz);
 	return buff;
 }
+
+static void
+dumptofile(int fd, const uint8_t *data, size_t sz)
+{
+	char name[64];
+	FILE *fp;
+	sprintf(name, "%d.dat", fd);
+	fp = fopen(name, "ab+");
+	fwrite(data, sz, 1, fp);
+	fclose(fp);
+	return ;
+}
+
 #endif
 
 static int
@@ -164,6 +177,10 @@ readpacket(int tfd, int *cmd)
 	}
 	int err = S->decode(*obj, buff.data + 4, sz - 1);
 	assert(err == (sz - 1));
+	/*
+	if (*cmd == DATA)
+		dumptofile(datapacket.session, buff.data, sz + 4);
+	*/
 	buff.out(sz + 4);
 	return 0;
 }
@@ -204,7 +221,7 @@ send(int fd, const uint8_t *dat, size_t sz)
 	t = tunnelmap[fd];
 	assert(t > 0);
 	socket5_zproto::data req;
-
+	//dumptofile(fd, dat, sz);
 	req.session = fd;
 	req.data.assign((const char *)dat, sz);
 	writepacket(t, DATA, req);
