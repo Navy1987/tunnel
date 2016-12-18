@@ -145,7 +145,7 @@ writepacket(int tfd, int cmd, const zprotobuf::wire &obj)
 	buff.in((uint8_t *)&sz, sizeof(sz));
 	buff.in(tempbuffer.c_str(), tempbuffer.size());
 	buff.in((uint8_t *)&cmd, 1);
-	printf("send %d %d\n", tfd, sz);
+	//printf("send %d %d\n", tfd, sz);
 }
 
 static int
@@ -157,9 +157,9 @@ readpacket(int tfd, int *cmd)
 	if (buff.datasz <= 4)
 		return -1;
 	sz = tou32(buff.data);
-	crypt_decode((uint8_t *)cryptkey.c_str(), cryptkey.size(), buff.data + 4, sz - 1);
 	if (buff.datasz < sz + 4)
 		return -1;
+	crypt_decode((uint8_t *)cryptkey.c_str(), cryptkey.size(), buff.data + 4, sz - 1);
 	*cmd = tou8(buff.data + 4 + sz - 1);
 	switch (*cmd) {
 	case OPEN:
@@ -307,7 +307,7 @@ poll(struct event *e)
 			int err = tunnelrecv[fd].read(fd);
 			if (err == 0)
 				errors.push_back(fd);
-			printf("read err:%d - %d\n", fd, err);
+			//printf("read err:%d - %d\n", fd, err);
 			//assert(err);
 		}
 		if (FD_ISSET(fd, &wset))
