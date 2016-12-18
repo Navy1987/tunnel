@@ -75,6 +75,7 @@ ensureget(int idx)
 	fd = tunnels[idx];
 	if (fd == 0) {
 		fd = aux::doconnect(addrip.c_str(), addrport);
+		printf("ensureget:%d\n", fd);
 		if (fd < 0)
 			return fd;
 		tunnels[idx] = fd;
@@ -99,7 +100,7 @@ fetchtunnel()
 	fd = aux::doconnect(addrip.c_str(), addrport);
 	if (fd < 0)
 		return fd;
-
+	printf("ensureget:%d\n", fd);
 	tunnels.push_back(fd);
 	++tunnelidx;
 	return fd;
@@ -307,7 +308,7 @@ poll(struct event *e)
 			int err = tunnelrecv[fd].read(fd);
 			if (err == 0)
 				errors.push_back(fd);
-			//printf("read err:%d - %d\n", fd, err);
+			printf("read err:%d - %d\n", fd, err);
 			//assert(err);
 		}
 		if (FD_ISSET(fd, &wset))

@@ -86,6 +86,7 @@ closeproxy(struct proxy *p)
 		printf("close tunnel:%d\n", p->tfd);
 		tunnelproxy.erase(p->tfd);
 	}
+	printf("close fd:%d\n", fd);
 	proxys.erase(fd);
 	return ;
 }
@@ -265,6 +266,7 @@ int socket5_io()
 			assert(proxys[fd].state != 0);
 			err = proxys[fd].buffer.recv.read(fd);
 			if (err == 0) {
+				printf("socket5 active close:%d\n", fd);
 				closeproxy(&proxys[fd]);
 				continue;
 			}
