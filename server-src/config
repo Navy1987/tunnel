@@ -1,8 +1,6 @@
 daemon = 0
-bootstrap = "main.lua"
+bootstrap = "server-src/main.lua"
 lualib_path = "silly/lualib/?.lua"
 lualib_cpath = "silly/luaclib/?.so"
 
-listen = "@8001"
-crypt = "helloworld"
-
+include "common.conf"

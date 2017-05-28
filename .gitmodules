@@ -1,3 +1,7 @@
 [submodule "server/silly"]
 	path = server/silly
 	url = git@github.com:findstr/silly
+[submodule "silly"]
+	path = silly
+	url = git@github.com:findstr/silly
+	branch = dev
