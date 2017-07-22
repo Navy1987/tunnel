@@ -11,14 +11,14 @@ end
 function M.read(fd)
 	local len = socket.read(fd, 4)
 	len = string.unpack("<I4", len)
-	print("read", fd, len)
+	--print("read", fd, len)
 	local dat = socket.read(fd, len)
 	return dat
 end
 
 function M.transfer(src, dst)
 	return function()
-		print("transfer", src, dst)
+		--print("transfer", src, dst)
 		while true do
 			local d = socket.read(src, 1)
 			local all = socket.readall(src)

@@ -2,8 +2,9 @@ local core = require "silly.core"
 local env = require "silly.env"
 local socket = require "socket"
 local packet = require "packet"
+local crypt = require "crypt"
 local serveraddr  = assert(env.get("server"), "server")
-
+local key = assert(env.get("crypt"), "crypt key")
 local function auth(fd)
 	print("auth start")
 	local str = socket.read(fd, 3)
@@ -45,7 +46,7 @@ local function connect(fd)
 	local tunnelfd = socket.connect(serveraddr)
 	print("connect server fd", serveraddr, tunnelfd)
 	local hdr = string.pack("<I2", port)
-	packet.write(tunnelfd, hdr .. domain)
+	packet.write(tunnelfd, hdr .. crypt.aesencode(key, domain))
 	core.fork(packet.transfer(fd, tunnelfd))
 	core.fork(packet.transfer(tunnelfd, fd))
 	local ack = "\x05\x00\x00\x01\x00\x00\x00\x00\xe9\xc7"

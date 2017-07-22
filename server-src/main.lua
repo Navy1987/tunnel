@@ -3,7 +3,6 @@ local env = require "silly.env"
 local socket = require "socket"
 local crypt = require "crypt"
 local dns = require "dns"
-local lz4 = require "lz4"
 local key = env.get("crypt")
 local packet = require "packet"
 
@@ -11,13 +10,14 @@ local function tunnel_intenet(tunnelfd)
 	local pk = packet.read(tunnelfd)
 	local port = string.unpack("<I2", pk)
 	local domain = pk:sub(2+1)
-	print(domain, port)
+	domain = crypt.aesdecode(key, domain)
+	--print(domain, port)
 	if dns.isdomain(domain) then
-		domain = assert(dns.query(domain, 10000))
+		domain = assert(dns.query(domain, 10000), domain)
 	end
 	local addr = string.format("%s@%d", domain, port)
 	local fd = socket.connect(addr)
-	print("connect", fd, domain, addr)
+	--print("connect", fd, domain, addr)
 	core.fork(packet.transfer(tunnelfd, fd))
 	core.fork(packet.transfer(fd, tunnelfd))
 end
