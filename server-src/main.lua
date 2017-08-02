@@ -18,8 +18,8 @@ local function tunnel_intenet(tunnelfd)
 	local addr = string.format("%s@%d", domain, port)
 	local fd = socket.connect(addr)
 	--print("connect", fd, domain, addr)
-	core.fork(packet.transfer(tunnelfd, fd))
-	core.fork(packet.transfer(fd, tunnelfd))
+	core.fork(packet.fromtunnel(tunnelfd, fd))
+	core.fork(packet.fromweb(fd, tunnelfd))
 end
 
 socket.listen(env.get("server"), function(tunnelfd, addr)

@@ -47,8 +47,8 @@ local function connect(fd)
 	print("connect server fd", serveraddr, tunnelfd)
 	local hdr = string.pack("<I2", port)
 	packet.write(tunnelfd, hdr .. crypt.aesencode(key, domain))
-	core.fork(packet.transfer(fd, tunnelfd))
-	core.fork(packet.transfer(tunnelfd, fd))
+	core.fork(packet.fromweb(fd, tunnelfd))
+	core.fork(packet.fromtunnel(tunnelfd, fd))
 	local ack = "\x05\x00\x00\x01\x00\x00\x00\x00\xe9\xc7"
 	socket.write(fd, ack)
 end
