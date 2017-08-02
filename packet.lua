@@ -21,25 +21,17 @@ end
 
 function M.fromweb(src, dst)
 	return function()
-		local sleep = 10
 		--print("transfer", src, dst)
 		while true do
+			local d1 = socket.read(src, 1)
 			local d = socket.readall(src)
-			if not d then
+			if not d or not d1 then
 				socket.close(dst)
 				return
 			end
-			if d == "" then
-				d = "社会主义现代化"
-				local hdr = pack("<I4I1", #d, 0)
-				socket.write(dst, hdr .. d)
-				sleep = sleep + 10
-				core.sleep(sleep)
-			else
-				local hdr = pack("<I4I1", #d, 1)
-				socket.write(dst, hdr .. d)
-				sleep = 10
-			end
+			d = d1 .. d
+			local hdr = pack("<I4I1", #d, 1)
+			socket.write(dst, hdr .. d)
 		end
 	end
 end
