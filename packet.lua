@@ -1,8 +1,13 @@
 local core = require "silly.core"
+local env = require "silly.env"
 local socket = require "socket"
+local crypt = require "crypt"
+local key = assert(env.get("crypt"), "crypt key")
 local pack = string.pack
 local unpack = string.unpack
-
+local sub = string.sub
+local format = string.format
+local MTU = 1400
 local M = {}
 
 function M.write(fd, dat)
@@ -19,40 +24,85 @@ function M.read(fd)
 	return dat
 end
 
+local keyword = "社会主义现代化"
+while #keyword < MTU do
+	keyword = keyword .. keyword
+end
+
+local mtu_head = pack("<I4", MTU)
+local header_len = {}
+setmetatable(header_len, { __mode="kv", __index = function(tbl, len)
+	local k = pack("<I4", len)
+	header_len[len] = k
+	return k
+end})
+
+local packet_len = {}
+setmetatable(packet_len, { __mode="kv", __index = function(tbl, len)
+	local k = format("<c%s", len)
+	packet_len[k] = k
+	return k
+end})
+
+
 function M.fromweb(src, dst)
 	return function()
+		local fmt = format("<c%d", MTU)
 		--print("transfer", src, dst)
 		while true do
-			local d1 = socket.read(src, 1)
 			local d = socket.readall(src)
-			if not d or not d1 then
+			if not d then
 				socket.close(dst)
 				return
 			end
-			d = d1 .. d
-			local hdr = pack("<I4I1", #d, 1)
-			socket.write(dst, hdr .. d)
+			if d == "" then
+				d = socket.read(src, 1)
+				local d1 = socket.readall(src)
+				if not d or not d1 then
+					socket.close(dst)
+					return
+				end
+				if d1 ~= "" then
+					d = d .. d1
+				end
+			end
+			local index = 1
+			local len = #d
+			while len > MTU do
+				local one = unpack(fmt, d, index)
+				local dat = mtu_head .. one
+				assert(#dat == (MTU+4))
+				socket.write(dst, crypt.aesencode(key, dat))
+				index = index + MTU
+				len = len - MTU
+			end
+			if len > 0 then
+				d = sub(d, index)
+				local len = #d
+				local head = header_len[len]
+				d = head .. d .. sub(keyword, 1, MTU - len)
+				d = crypt.aesencode(key, d)
+				assert(#d == (MTU+4))
+				socket.write(dst, d)
+			end
 		end
 	end
 end
 
 function M.fromtunnel(src, dst)
 	return function()
+		local ONCE =  MTU + 4
 		while true do
-			local d = socket.read(src, 5)
+			local d = socket.read(src, ONCE)
 			if not d then
 				socket.close(dst)
 				return
 			end
-			local count, v = unpack("<I4I1", d)
-			local dat = socket.read(src, count)
-			if not dat then
-				socket.close(dst)
-				return
-			end
-			if v == 1 then
-				socket.write(dst, dat)
-			end
+			d = crypt.aesdecode(key, d)
+			local count = unpack("<I4", d)
+			local fmt = packet_len[count]
+			local dat = unpack(fmt, d, 5)
+			socket.write(dst, dat)
 		end
 	end
 end
