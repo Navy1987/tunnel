@@ -1,8 +1,7 @@
-local core = require "silly.core"
-local env = require "silly.env"
-local socket = require "socket"
-local crypt = require "crypt"
-local key = assert(env.get("crypt"), "crypt key")
+local core = require "sys.core"
+local socket = require "sys.socket"
+local crypt = require "sys.crypt"
+local key = assert(core.envget("crypt"), "crypt key")
 local pack = string.pack
 local unpack = string.unpack
 local sub = string.sub
@@ -18,6 +17,9 @@ end
 
 function M.read(fd)
 	local len = socket.read(fd, 4)
+	if not len then
+		return
+	end
 	len = string.unpack("<I4", len)
 	--print("read", fd, len)
 	local dat = socket.read(fd, len)

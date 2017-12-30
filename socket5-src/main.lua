@@ -1,10 +1,9 @@
-local core = require "silly.core"
-local env = require "silly.env"
-local socket = require "socket"
+local core = require "sys.core"
+local socket = require "sys.socket"
+local crypt = require "sys.crypt"
 local packet = require "packet"
-local crypt = require "crypt"
-local serveraddr  = assert(env.get("server"), "server")
-local key = assert(env.get("crypt"), "crypt key")
+local key = assert(core.envget("crypt"), "crypt key")
+local serveraddr  = assert(core.envget("server"), "server")
 local function auth(fd)
 	print("auth start")
 	local str = socket.read(fd, 3)
@@ -40,13 +39,14 @@ local function connect(fd)
 	--domain name
 	local domain = socket.read(fd, len)
 	print("connect domain", domain)
+	domain = crypt.aesencode(key, domain)
 	str = socket.read(fd, 2)
 	local port = string.unpack(">I2", str)
 	print("connect port", port)
 	local tunnelfd = socket.connect(serveraddr)
 	print("connect server fd", serveraddr, tunnelfd)
 	local hdr = string.pack("<I2", port)
-	packet.write(tunnelfd, hdr .. crypt.aesencode(key, domain))
+	packet.write(tunnelfd, hdr .. domain)
 	core.fork(packet.fromweb(fd, tunnelfd))
 	core.fork(packet.fromtunnel(tunnelfd, fd))
 	local ack = "\x05\x00\x00\x01\x00\x00\x00\x00\xe9\xc7"
@@ -59,7 +59,7 @@ local function socket5(fd)
 end
 
 
-socket.listen("@1088", function(fd, addr)
+socket.listen(core.envget("socket5"), function(fd, addr)
 	print(fd, "from", addr)
 	local ok, err = core.pcall(socket5, fd)
 	if not ok then
@@ -67,6 +67,4 @@ socket.listen("@1088", function(fd, addr)
 		socket.close(fd)
 	end
 end)
-
-
 
